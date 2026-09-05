@@ -6,7 +6,10 @@ import os
 import streamlit as st
 import streamlit.components.v1 as components
 
+from appservice.cloud_channel_bridge import patch_streamlit_channel_endpoint
 from appservice.route_mount import mount_with_short_retry
+
+patch_streamlit_channel_endpoint()
 
 if os.environ.get('APP_ROUTES_READY') != '1':
     mount_with_short_retry()
@@ -63,3 +66,4 @@ with st.expander("About this app"):
     st.write("Turn written text into spoken audio directly in your browser.")
     st.write("Adjust the speaking rate, pitch, and volume, then use the playback controls to speak, pause, resume, or stop at any time.")
     st.write("The available voices and pronunciation depend on the speech voices installed or provided by your browser and operating system.")
+

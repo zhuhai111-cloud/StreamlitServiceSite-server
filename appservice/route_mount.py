@@ -72,25 +72,29 @@ def _expanded_route_specs():
 
 
 def mount_api_routes() -> int:
-    """Mount the service routes on the live Streamlit Tornado application.
+    """Mount service routes on the live Streamlit Tornado application.
 
-    Safe to call on every Streamlit script rerun. Returns the number of newly
-    patched Application objects.
+    Safe to call on every Streamlit script rerun. The return value is the
+    number of matching Streamlit applications that are already ready or were
+    newly patched during this call.
     """
-    mounted = 0
+    ready = 0
     with _LOCK:
         for app in _candidate_apps():
             app_id = id(app)
-            if app_id in _MOUNTED or not _looks_like_streamlit(app):
+            if not _looks_like_streamlit(app):
+                continue
+            if app_id in _MOUNTED:
+                ready += 1
                 continue
             try:
                 app.add_handlers(r".*$", _expanded_route_specs())
                 _MOUNTED.add(app_id)
-                mounted += 1
+                ready += 1
                 print(f"[service] ROUTES READY app={app_id}", flush=True)
             except Exception as ex:
                 print(f"[service] ROUTE MOUNT FAILED: {ex}", flush=True)
-    return mounted
+    return ready
 
 
 def mount_with_short_retry() -> None:
