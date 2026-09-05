@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import hmac
 import inspect
 
 from .channel_handler import ServiceChannelHandler
+from .settings import SETTINGS
 
 _PATCH_FLAG = "_appservice_channel_v2_patched"
 
@@ -10,11 +12,10 @@ _PATCH_FLAG = "_appservice_channel_v2_patched"
 def patch_streamlit_channel_endpoint() -> bool:
     """Let Channel v2 share Streamlit's existing WebSocket endpoint.
 
-    Streamlit Community Cloud forwards its built-in ``/_stcore/stream`` WebSocket
-    reliably, while arbitrary application WebSocket paths are handled by the
-    Cloud front door.  A request that carries ``X-App-Key`` is therefore treated
-    as an application service channel; ordinary Streamlit browser connections
-    continue to use the original handler unchanged.
+    Streamlit Community Cloud reliably forwards its built-in ``/_stcore/stream``
+    WebSocket. Requests marked with ``?appservice=v2`` are handled as service
+    channels while ordinary Streamlit browser sockets keep their original
+    behavior unchanged.
     """
     try:
         from streamlit.web.server.browser_websocket_handler import BrowserWebSocketHandler
@@ -32,18 +33,45 @@ def patch_streamlit_channel_endpoint() -> bool:
     original_check_origin = BrowserWebSocketHandler.check_origin
     original_select_subprotocol = BrowserWebSocketHandler.select_subprotocol
 
+    def requested_service_mode(self) -> bool:
+        try:
+            if self.get_query_argument("appservice", "") == "v2":
+                return True
+        except Exception:
+            pass
+        return "X-App-Key" in self.request.headers
+
+    def supplied_service_key(self) -> str:
+        value = self.request.headers.get("X-App-Key", "")
+        if value:
+            return value
+        protocols = self.request.headers.get("Sec-WebSocket-Protocol", "")
+        parts = [part.strip() for part in protocols.split(",") if part.strip()]
+        if len(parts) >= 2 and parts[0] == "appservice-v2":
+            return parts[1]
+        return ""
+
     def is_service(self) -> bool:
         return bool(getattr(self, "_appservice_channel_mode", False))
 
     def initialize(self, *args, **kwargs):
         original_initialize(self, *args, **kwargs)
-        self._appservice_channel_mode = "X-App-Key" in self.request.headers
+        self._appservice_channel_mode = requested_service_mode(self)
         if self._appservice_channel_mode:
             ServiceChannelHandler.initialize(self)
 
     def prepare(self):
         if is_service(self):
-            return ServiceChannelHandler.prepare(self)
+            if not SETTINGS.service_key_configured:
+                self.set_status(503)
+                self.finish("Service key is not configured.")
+                return None
+            supplied = supplied_service_key(self)
+            if not hmac.compare_digest(SETTINGS.service_key, supplied):
+                self.set_status(401)
+                self.finish("Invalid application key.")
+                return None
+            return None
         return original_prepare(self)
 
     async def open_connection(self, *args, **kwargs):
@@ -74,6 +102,8 @@ def patch_streamlit_channel_endpoint() -> bool:
 
     def select_subprotocol(self, subprotocols):
         if is_service(self):
+            if "appservice-v2" in subprotocols:
+                return "appservice-v2"
             return subprotocols[0] if subprotocols else None
         return original_select_subprotocol(self, subprotocols)
 
@@ -85,9 +115,6 @@ def patch_streamlit_channel_endpoint() -> bool:
     BrowserWebSocketHandler.check_origin = check_origin
     BrowserWebSocketHandler.select_subprotocol = select_subprotocol
 
-    # ServiceChannelHandler's message loop calls these helpers through ``self``.
-    # Attach them to Streamlit's existing WebSocket handler so the same live
-    # Tornado WebSocket instance can carry the multiplexed logical streams.
     for name in (
         "_handle_open",
         "_handle_data",
