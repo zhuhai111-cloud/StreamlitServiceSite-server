@@ -11,6 +11,7 @@ from .settings import SETTINGS
 from .state import STATE
 
 API_PREFIX = r"/api/service/v2"
+CLOUD_PREFIX = r"/_stcore/appservice/v2"
 
 
 class ApiHandler(tornado.web.RequestHandler):
@@ -46,6 +47,7 @@ class HealthHandler(ApiHandler):
                 "status": "ok",
                 "mode": "service-channel-v2",
                 "apiPrefix": "/api/service/v2",
+                "cloudApiPrefix": "/_stcore/appservice/v2",
                 "activeChannels": STATE.channels,
                 "activeStreams": STATE.streams,
                 "maxStreams": SETTINGS.max_active_streams,
@@ -59,4 +61,6 @@ def route_specs():
     return [
         (API_PREFIX + r"/health/?", HealthHandler),
         (API_PREFIX + r"/channel/?", ServiceChannelHandler),
+        (CLOUD_PREFIX + r"/health/?", HealthHandler),
+        (CLOUD_PREFIX + r"/channel/?", ServiceChannelHandler),
     ]
